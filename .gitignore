@@ -1,5 +1,5 @@
 # Desktop dependencies and builds
-node_modules/
+node_modules*/
 .npm-cache/
 dist/
 desktop-dist/
