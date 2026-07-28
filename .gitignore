@@ -1,0 +1,32 @@
+# Desktop dependencies and builds
+node_modules/
+.npm-cache/
+dist/
+desktop-dist/
+
+# Android and Gradle builds
+.gradle/
+**/build/
+manual-build/
+local.properties
+*.apk
+*.aab
+*.apks
+
+# Signing material and firmware data
+*.jks
+*.keystore
+*.pem
+*.key
+*.bin
+*.img
+*.uf2
+*.hex
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+

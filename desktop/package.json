@@ -1,0 +1,35 @@
+{
+  "name": "firmware-forge",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Safe desktop firmware manager for ESP32 and extensible device adapters",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "vite build",
+    "desktop:build": "npm run build && electron-builder --win nsis",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@serialport/parser-readline": "^13.0.0",
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8",
+    "vite": "^6.1.0",
+    "wait-on": "^8.0.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "build": {
+    "appId": "za.co.firmwareforge.app",
+    "productName": "Firmware Forge",
+    "directories": { "output": "desktop-dist" },
+    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}
