@@ -26,19 +26,31 @@ app.whenReady().then(createWindow);
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
 function emit(line) { if (win && !win.isDestroyed()) win.webContents.send('operation:log', line); }
+function esptoolCommand() {
+  const bundled = app.isPackaged ? path.join(process.resourcesPath, 'tools', 'esptool.exe') : path.join(__dirname, '..', 'tools', 'esptool.exe');
+  return fs.existsSync(bundled) ? { command: bundled, prefix: [] } : { command: 'python', prefix: ['-m', 'esptool'] };
+}
+function friendlyEspError(output, fallback) {
+  const text = String(output || fallback || 'ESP operation failed.');
+  if (/failed to connect|no serial data received|wrong boot mode/i.test(text)) return new Error('The ESP32 did not enter download mode. Hold BOOT, tap RESET/EN, release BOOT, then click Inspect ESP again.\n\n' + text);
+  if (/access is denied|permissionerror|could not open.*port|resource busy/i.test(text)) return new Error('The serial port is busy or unavailable. Close Arduino Serial Monitor, PlatformIO, PuTTY, or any other program using this COM port, then retry.\n\n' + text);
+  if (/not recognized|enoent|cannot find/i.test(text)) return new Error('The bundled ESP utility is missing. Reinstall Firmware Forge 0.4.1 or newer.\n\n' + text);
+  return new Error(text);
+}
 function esptool(args) {
   if (activeProcess) return Promise.reject(new Error('Another device operation is already running.'));
   return new Promise((resolve, reject) => {
-    emit(`$ python -m esptool ${args.join(' ')}`);
-    const child = spawn('python', ['-m', 'esptool', ...args], { windowsHide: true });
+    const runtime = esptoolCommand();
+    emit(`$ esptool ${args.join(' ')}\n`);
+    const child = spawn(runtime.command, [...runtime.prefix, ...args], { windowsHide: true });
     activeProcess = child;
     let output = '';
     child.stdout.on('data', d => { const s = d.toString(); output += s; emit(s); });
     child.stderr.on('data', d => { const s = d.toString(); output += s; emit(s); });
-    child.on('error', err => { activeProcess = null; reject(err); });
+    child.on('error', err => { activeProcess = null; reject(friendlyEspError('', err.message)); });
     child.on('close', code => {
       activeProcess = null;
-      if (code === 0) resolve(output); else reject(new Error(output || `esptool exited with code ${code}`));
+      if (code === 0) resolve(output); else reject(friendlyEspError(output, `esptool exited with code ${code}`));
     });
   });
 }
@@ -147,10 +159,13 @@ ipcMain.handle('devices:watch', async () => {
 
 ipcMain.handle('ports:list', async () => SerialPort.list());
 ipcMain.handle('esp:inspect', async (_e, { port, baud = 115200 }) => {
-  const output = await esptool(['--port', port, '--baud', String(baud), 'chip-id']);
+  const output = await esptool(['--port', port, '--baud', String(baud), 'flash-id']);
   const chip = output.match(/Chip is (.+)/i)?.[1]?.trim() || 'ESP device';
   const mac = output.match(/MAC:\s*([0-9a-f:]+)/i)?.[1] || 'Unknown';
-  return { chip, mac, raw: output };
+  const flashLabel = output.match(/Detected flash size:\s*([^\r\n]+)/i)?.[1]?.trim() || 'Unknown';
+  const sizeMatch = flashLabel.match(/([\d.]+)\s*(KB|MB)/i); let flashSizeBytes = 0;
+  if (sizeMatch) flashSizeBytes = Math.round(Number(sizeMatch[1]) * (sizeMatch[2].toUpperCase() === 'MB' ? 1048576 : 1024));
+  return { chip, mac, flashLabel, flashSizeBytes, flashSizeHex: flashSizeBytes ? `0x${flashSizeBytes.toString(16)}` : null, raw: output };
 });
 ipcMain.handle('esp:backup', async (_e, { port, baud = 460800, size = '0x400000' }) => {
   const chosen = await dialog.showSaveDialog(win, { title: 'Save flash backup', defaultPath: `esp32-backup-${new Date().toISOString().slice(0,10)}.bin`, filters: [{ name: 'Firmware image', extensions: ['bin'] }] });

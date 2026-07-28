@@ -1,6 +1,6 @@
 {
   "name": "firmware-forge",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Safe desktop firmware manager for ESP32 and extensible device adapters",
   "main": "electron/main.cjs",
@@ -29,6 +29,7 @@
     "productName": "Firmware Forge",
     "directories": { "output": "desktop-dist" },
     "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "extraResources": [{ "from": "tools", "to": "tools", "filter": ["**/*"] }],
     "win": { "target": "nsis" },
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
   }
