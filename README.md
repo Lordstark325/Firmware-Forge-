@@ -33,8 +33,13 @@ This repository contains two applications:
 - Android USB permission requests.
 - Firmware selection using Android's Storage Access Framework.
 - Local SHA-256 calculation.
+- Temporary pairing token and local-network gateway service.
+- Authenticated USB byte bridge for a paired desktop.
+- Desktop-routed ESP inspection, backup, write, and verification through the phone.
 
-Mobile firmware writing remains intentionally disabled until the USB transport is validated on physical ESP32 OTG hardware.
+The phone gateway currently supports probable ESP serial adapters that expose compatible bulk endpoints. Some boards require manual BOOT/RESET entry, and CP210x/CH340 variants may need additional Android driver initialization. Keep the phone and desktop on the same trusted local network; pairing is authenticated with a temporary token but the current local transport is not TLS-encrypted.
+
+Router detection is available through the gateway, but router firmware writes remain intentionally locked until a manufacturer/model adapter validates the image, upgrade protocol, and recovery method.
 
 ## Safety boundaries
 
