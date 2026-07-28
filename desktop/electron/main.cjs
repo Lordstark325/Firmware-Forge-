@@ -3,6 +3,8 @@ const { spawn, execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const http = require('http');
+const net = require('net');
 const { SerialPort } = require('serialport');
 
 let win;
@@ -24,19 +26,31 @@ app.whenReady().then(createWindow);
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
 function emit(line) { if (win && !win.isDestroyed()) win.webContents.send('operation:log', line); }
+function esptoolCommand() {
+  const bundled = app.isPackaged ? path.join(process.resourcesPath, 'tools', 'esptool.exe') : path.join(__dirname, '..', 'tools', 'esptool.exe');
+  return fs.existsSync(bundled) ? { command: bundled, prefix: [] } : { command: 'python', prefix: ['-m', 'esptool'] };
+}
+function friendlyEspError(output, fallback) {
+  const text = String(output || fallback || 'ESP operation failed.');
+  if (/failed to connect|no serial data received|wrong boot mode/i.test(text)) return new Error('The ESP32 did not enter download mode. Hold BOOT, tap RESET/EN, release BOOT, then click Inspect ESP again.\n\n' + text);
+  if (/access is denied|permissionerror|could not open.*port|resource busy/i.test(text)) return new Error('The serial port is busy or unavailable. Close Arduino Serial Monitor, PlatformIO, PuTTY, or any other program using this COM port, then retry.\n\n' + text);
+  if (/not recognized|enoent|cannot find/i.test(text)) return new Error('The bundled ESP utility is missing. Reinstall Firmware Forge 0.4.1 or newer.\n\n' + text);
+  return new Error(text);
+}
 function esptool(args) {
   if (activeProcess) return Promise.reject(new Error('Another device operation is already running.'));
   return new Promise((resolve, reject) => {
-    emit(`$ python -m esptool ${args.join(' ')}`);
-    const child = spawn('python', ['-m', 'esptool', ...args], { windowsHide: true });
+    const runtime = esptoolCommand();
+    emit(`$ esptool ${args.join(' ')}\n`);
+    const child = spawn(runtime.command, [...runtime.prefix, ...args], { windowsHide: true });
     activeProcess = child;
     let output = '';
     child.stdout.on('data', d => { const s = d.toString(); output += s; emit(s); });
     child.stderr.on('data', d => { const s = d.toString(); output += s; emit(s); });
-    child.on('error', err => { activeProcess = null; reject(err); });
+    child.on('error', err => { activeProcess = null; reject(friendlyEspError('', err.message)); });
     child.on('close', code => {
       activeProcess = null;
-      if (code === 0) resolve(output); else reject(new Error(output || `esptool exited with code ${code}`));
+      if (code === 0) resolve(output); else reject(friendlyEspError(output, `esptool exited with code ${code}`));
     });
   });
 }
@@ -69,6 +83,52 @@ function parseAdb(output) {
   });
 }
 
+function gatewayRequest(host, token, pathName, method = 'GET') {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host, port: 8765, path: pathName, method, timeout: 5000, headers: { Authorization: `Bearer ${token}` } }, res => {
+      let body = ''; res.on('data', d => body += d); res.on('end', () => {
+        let parsed; try { parsed = JSON.parse(body); } catch { return reject(new Error('Phone returned an invalid gateway response.')); }
+        if (res.statusCode !== 200) reject(new Error(parsed.error || `Gateway returned ${res.statusCode}`)); else resolve(parsed);
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('Phone gateway timed out.'))); req.on('error', reject); req.end();
+  });
+}
+
+async function gatewayRelay(host, token) {
+  await gatewayRequest(host, token, '/v1/bridge/start', 'POST');
+  const server = net.createServer(local => {
+    const remote = net.connect({ host, port: 8766 }, () => remote.write(`TOKEN ${token}\n`));
+    remote.on('error', e => local.destroy(e)); local.on('error', () => remote.destroy()); local.pipe(remote); remote.pipe(local);
+  });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  return { server, port: server.address().port };
+}
+
+async function withGatewayPort(host, token, action) {
+  const relay = await gatewayRelay(host, token);
+  try { return await action(`socket://127.0.0.1:${relay.port}`); }
+  finally { relay.server.close(); await gatewayRequest(host, token, '/v1/bridge/stop', 'POST').catch(() => {}); }
+}
+
+ipcMain.handle('gateway:status', async (_e, { host, token }) => gatewayRequest(host, token, '/v1/status'));
+ipcMain.handle('gateway:inspect', async (_e, { host, token }) => withGatewayPort(host, token, async portUrl => {
+  const output = await esptool(['--port', portUrl, '--baud', '115200', 'chip-id']);
+  return { chip: output.match(/Chip is (.+)/i)?.[1]?.trim() || 'ESP device', mac: output.match(/MAC:\s*([0-9a-f:]+)/i)?.[1] || 'Unknown', raw: output };
+}));
+ipcMain.handle('gateway:backup', async (_e, { host, token, baud = 115200, size = '0x400000' }) => {
+  const chosen = await dialog.showSaveDialog(win, { title: 'Save gateway flash backup', defaultPath: `esp32-gateway-backup-${new Date().toISOString().slice(0,10)}.bin`, filters: [{ name: 'Firmware image', extensions: ['bin'] }] });
+  if (chosen.canceled) return null;
+  await withGatewayPort(host, token, portUrl => esptool(['--port', portUrl, '--baud', String(baud), 'read-flash', '0x0', size, chosen.filePath]));
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(chosen.filePath)).digest('hex'); return { path: chosen.filePath, sha256: hash, bytes: fs.statSync(chosen.filePath).size };
+});
+ipcMain.handle('gateway:flash', async (_e, { host, token, file, address = '0x0', baud = 115200 }) => {
+  if (!file || !fs.existsSync(file)) throw new Error('Select a valid firmware file.');
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  await withGatewayPort(host, token, portUrl => esptool(['--port', portUrl, '--baud', String(baud), 'write-flash', '--verify', address, file]));
+  return { sha256: hash, bytes: fs.statSync(file).size };
+});
+
 ipcMain.handle('devices:watch', async () => {
   if (activeProcess) return { busy: true, devices: [] };
   const [ports, adbOut, fastbootOut, pnpOut] = await Promise.all([
@@ -99,10 +159,13 @@ ipcMain.handle('devices:watch', async () => {
 
 ipcMain.handle('ports:list', async () => SerialPort.list());
 ipcMain.handle('esp:inspect', async (_e, { port, baud = 115200 }) => {
-  const output = await esptool(['--port', port, '--baud', String(baud), 'chip-id']);
+  const output = await esptool(['--port', port, '--baud', String(baud), 'flash-id']);
   const chip = output.match(/Chip is (.+)/i)?.[1]?.trim() || 'ESP device';
   const mac = output.match(/MAC:\s*([0-9a-f:]+)/i)?.[1] || 'Unknown';
-  return { chip, mac, raw: output };
+  const flashLabel = output.match(/Detected flash size:\s*([^\r\n]+)/i)?.[1]?.trim() || 'Unknown';
+  const sizeMatch = flashLabel.match(/([\d.]+)\s*(KB|MB)/i); let flashSizeBytes = 0;
+  if (sizeMatch) flashSizeBytes = Math.round(Number(sizeMatch[1]) * (sizeMatch[2].toUpperCase() === 'MB' ? 1048576 : 1024));
+  return { chip, mac, flashLabel, flashSizeBytes, flashSizeHex: flashSizeBytes ? `0x${flashSizeBytes.toString(16)}` : null, raw: output };
 });
 ipcMain.handle('esp:backup', async (_e, { port, baud = 460800, size = '0x400000' }) => {
   const chosen = await dialog.showSaveDialog(win, { title: 'Save flash backup', defaultPath: `esp32-backup-${new Date().toISOString().slice(0,10)}.bin`, filters: [{ name: 'Firmware image', extensions: ['bin'] }] });

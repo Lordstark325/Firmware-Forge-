@@ -1,5 +1,5 @@
 # Desktop dependencies and builds
-node_modules/
+node_modules*/
 .npm-cache/
 dist/
 desktop-dist/
@@ -7,7 +7,7 @@ desktop-dist/
 # Android and Gradle builds
 .gradle/
 **/build/
-manual-build/
+manual-build*/
 local.properties
 *.apk
 *.aab
@@ -22,6 +22,7 @@ local.properties
 *.img
 *.uf2
 *.hex
+desktop/tools/*.exe
 
 # IDE and operating-system files
 .idea/
@@ -29,4 +30,3 @@ local.properties
 *.iml
 .DS_Store
 Thumbs.db
-

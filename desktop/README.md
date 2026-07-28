@@ -4,7 +4,7 @@ Windows-first desktop firmware workbench. Version 0.1 supports ESP32-family boar
 
 ## Capabilities
 
-- Discover serial ports and inspect an ESP chip before writing.
+- Discover serial ports and inspect an ESP chip and its flash capacity before writing.
 - Back up the complete flash to a `.bin` file and calculate SHA-256.
 - Flash a local image at an explicit offset with esptool verification.
 - Erase is available in the backend but intentionally not exposed in the first UI.
@@ -26,7 +26,7 @@ npm run dev
 
 Android support requires Google Android SDK Platform Tools (`adb` and `fastboot`) on PATH. Enable USB debugging and approve the computer on the phone. Windows may also need the manufacturer's USB driver.
 
-Build a Windows installer with `npm run desktop:build`.
+Build a Windows installer with `npm run desktop:build`. Release builds bundle `tools/esptool.exe` as an `extraResource`, so end users do not need Python installed.
 
 ## Important limitations
 

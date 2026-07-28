@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('firmwareAPI', {
   listPorts: () => ipcRenderer.invoke('ports:list'),
   watchDevices: () => ipcRenderer.invoke('devices:watch'),
+  gatewayStatus: (host, token) => ipcRenderer.invoke('gateway:status', { host, token }),
+  gatewayInspect: (host, token) => ipcRenderer.invoke('gateway:inspect', { host, token }),
+  gatewayBackup: (args) => ipcRenderer.invoke('gateway:backup', args),
+  gatewayFlash: (args) => ipcRenderer.invoke('gateway:flash', args),
   inspect: (port, baud) => ipcRenderer.invoke('esp:inspect', { port, baud }),
   backup: (args) => ipcRenderer.invoke('esp:backup', args),
   flash: (args) => ipcRenderer.invoke('esp:flash', args),
