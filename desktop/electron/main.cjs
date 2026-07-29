@@ -26,6 +26,11 @@ app.whenReady().then(createWindow);
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
 function emit(line) { if (win && !win.isDestroyed()) win.webContents.send('operation:log', line); }
+function libraryDirectory() { const dir = path.join(app.getPath('userData'), 'firmware-library'); fs.mkdirSync(dir, { recursive: true }); return dir; }
+function libraryIndexPath() { return path.join(libraryDirectory(), 'index.json'); }
+function readLibrary() { try { return JSON.parse(fs.readFileSync(libraryIndexPath(), 'utf8')); } catch { return []; } }
+function writeLibrary(items) { fs.writeFileSync(libraryIndexPath(), JSON.stringify(items, null, 2), 'utf8'); }
+function safeName(value) { return String(value || 'unknown').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').slice(0, 50) || 'unknown'; }
 function esptoolCommand() {
   const bundled = app.isPackaged ? path.join(process.resourcesPath, 'tools', 'esptool.exe') : path.join(__dirname, '..', 'tools', 'esptool.exe');
   return fs.existsSync(bundled) ? { command: bundled, prefix: [] } : { command: 'python', prefix: ['-m', 'esptool'] };
@@ -167,13 +172,24 @@ ipcMain.handle('esp:inspect', async (_e, { port, baud = 115200 }) => {
   if (sizeMatch) flashSizeBytes = Math.round(Number(sizeMatch[1]) * (sizeMatch[2].toUpperCase() === 'MB' ? 1048576 : 1024));
   return { chip, mac, flashLabel, flashSizeBytes, flashSizeHex: flashSizeBytes ? `0x${flashSizeBytes.toString(16)}` : null, raw: output };
 });
-ipcMain.handle('esp:backup', async (_e, { port, baud = 460800, size = '0x400000' }) => {
-  const chosen = await dialog.showSaveDialog(win, { title: 'Save flash backup', defaultPath: `esp32-backup-${new Date().toISOString().slice(0,10)}.bin`, filters: [{ name: 'Firmware image', extensions: ['bin'] }] });
-  if (chosen.canceled) return null;
-  await esptool(['--port', port, '--baud', String(baud), 'read-flash', '0x0', size, chosen.filePath]);
-  const hash = crypto.createHash('sha256').update(fs.readFileSync(chosen.filePath)).digest('hex');
-  return { path: chosen.filePath, sha256: hash, bytes: fs.statSync(chosen.filePath).size };
+ipcMain.handle('esp:backup', async (_e, { port, baud = 460800, size = '0x400000', chip = 'ESP device', mac = 'Unknown', flashLabel = '' }) => {
+  const createdAt = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const filename = `esp32-${safeName(mac)}-${createdAt.replace(/[:.]/g, '-')}.bin`;
+  const target = path.join(libraryDirectory(), filename);
+  await esptool(['--port', port, '--baud', String(baud), 'read-flash', '0x0', size, target]);
+  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');
+  const entry = { id, filename, path: target, sha256, bytes: fs.statSync(target).size, createdAt, chip, mac, flashLabel, port };
+  const items = [entry, ...readLibrary().filter(item => item.id !== id)]; writeLibrary(items);
+  return entry;
 });
+ipcMain.handle('library:list', async () => readLibrary().filter(item => fs.existsSync(item.path)));
+ipcMain.handle('library:export', async (_e, id) => {
+  const item = readLibrary().find(entry => entry.id === id); if (!item || !fs.existsSync(item.path)) throw new Error('The library backup file is missing.');
+  const chosen = await dialog.showSaveDialog(win, { title: 'Export firmware backup', defaultPath: item.filename, filters: [{ name: 'Firmware image', extensions: ['bin'] }] });
+  if (chosen.canceled) return null; fs.copyFileSync(item.path, chosen.filePath); return chosen.filePath;
+});
+ipcMain.handle('library:open', async () => shell.openPath(libraryDirectory()));
 ipcMain.handle('esp:flash', async (_e, { port, baud = 460800, file, address = '0x0', erase = false }) => {
   if (!file || !fs.existsSync(file)) throw new Error('Select a valid firmware file.');
   if (erase) await esptool(['--port', port, '--baud', String(baud), 'erase-flash']);
