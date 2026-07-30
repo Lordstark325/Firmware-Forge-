@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('firmwareAPI', {
   backup: (args) => ipcRenderer.invoke('esp:backup', args),
   libraryList: () => ipcRenderer.invoke('library:list'),
   libraryExport: (id) => ipcRenderer.invoke('library:export', id),
+  libraryReport: (id) => ipcRenderer.invoke('library:report', id),
   libraryOpen: () => ipcRenderer.invoke('library:open'),
   flash: (args) => ipcRenderer.invoke('esp:flash', args),
   erase: (args) => ipcRenderer.invoke('esp:erase', args),
