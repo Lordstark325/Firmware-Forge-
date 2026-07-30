@@ -2,7 +2,7 @@
 
 Private, sideload-only Android companion. It requires a phone with USB Host/OTG support and a data-capable cable or OTG adapter.
 
-Version 0.3 detects USB devices, classifies common ESP serial bridges and modem/router USB interfaces, requests Android USB permission, selects firmware through the Storage Access Framework, and calculates SHA-256 locally. It can also expose an authenticated local control service and USB byte bridge so the paired desktop app can route ESP inspection, backup, flashing, and verification through the phone. Backups made through the gateway are automatically catalogued by Firmware Forge Desktop 0.5 or newer and can be exported again from its Firmware Library.
+Version 0.4 detects USB devices, classifies common ESP serial bridges and modem/router USB interfaces, requests Android USB permission, selects firmware through the Storage Access Framework, and calculates SHA-256 locally. It can also expose an authenticated local control service and USB byte bridge so the paired desktop app can route ESP inspection, backup, flashing, and verification through the phone. Backups made through the gateway are automatically catalogued by Firmware Forge Desktop 0.6 or newer, where the recovery image can be exported and a Device Assessment PDF can be downloaded.
 
 Start the gateway in the app, then enter the displayed phone IP and temporary pairing token in the desktop **Phone gateway** screen. Use a trusted local network. The pairing token authenticates the session, but this first local bridge is not TLS-encrypted.
 
