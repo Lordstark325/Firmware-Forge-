@@ -22,10 +22,37 @@ function createWindow() {
   if (devUrl) win.loadURL(devUrl); else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  const smokePath = process.argv.find(arg => arg.startsWith('--assessment-smoke='))?.slice('--assessment-smoke='.length) || process.env.FF_PDF_SMOKE_PATH;
+  if (smokePath) {
+    await createAssessmentPdf({ filename: 'esp32-test.bin', chip: 'ESP32-S3', mac: 'AA:BB:CC:DD:EE:FF', flashLabel: '16MB', bytes: 16777216, createdAt: new Date().toISOString(), sha256: 'a'.repeat(64), port: 'COM6' }, smokePath);
+    app.quit(); return;
+  }
+  createWindow();
+});
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
 function emit(line) { if (win && !win.isDestroyed()) win.webContents.send('operation:log', line); }
+function libraryDirectory() { const dir = path.join(app.getPath('userData'), 'firmware-library'); fs.mkdirSync(dir, { recursive: true }); return dir; }
+function libraryIndexPath() { return path.join(libraryDirectory(), 'index.json'); }
+function readLibrary() { try { return JSON.parse(fs.readFileSync(libraryIndexPath(), 'utf8')); } catch { return []; } }
+function writeLibrary(items) { fs.writeFileSync(libraryIndexPath(), JSON.stringify(items, null, 2), 'utf8'); }
+function safeName(value) { return String(value || 'unknown').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').slice(0, 50) || 'unknown'; }
+function html(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function assessmentHtml(item) {
+  const facts = [
+    ['ESP chip family', item.chip || 'Unknown', 'Detected'], ['MAC address', item.mac || 'Unknown', 'Detected'],
+    ['Flash capacity', item.flashLabel || `${item.bytes || 0} bytes`, 'Detected'], ['USB adapter / port', item.port || 'Unknown', item.port ? 'Detected' : 'Unknown'],
+    ['Backup filename', item.filename || 'Unknown', 'Recorded'], ['Backup size', `${item.bytes || 0} bytes`, 'Recorded'],
+    ['Backup date', item.createdAt ? new Date(item.createdAt).toLocaleString() : 'Unknown', 'Recorded'], ['SHA-256', item.sha256 || 'Unknown', 'Verified']
+  ];
+  const unknowns = [['Exact ESP32 board/model','Not provided'],['Attached relays, sensors, motors, and displays','Not provided'],['GPIO assignments and electrical characteristics','Not provided'],['Mesh technology (ESP-MESH, ESP-NOW, BLE Mesh, Thread, other)','Not detected'],['Desired tablet platform (Android, iPad, or both)','Not provided'],['Original ESP-IDF or Arduino source project','Not available from compiled backup']];
+  return `<!doctype html><html><head><meta charset="utf-8"><style>@page{size:A4;margin:18mm}*{box-sizing:border-box}body{margin:0;color:#14251e;font:11px Arial,sans-serif}.hero{background:#082019;color:#fff;padding:25px;border-radius:12px}.eyebrow{color:#66e9a9;font-size:9px;letter-spacing:2px}.hero h1{font-size:27px;margin:8px 0}.hero p{color:#b9d2c7;margin:0}.meta{margin-top:12px;color:#7e9c8f}.section{margin-top:19px}h2{font-size:15px;margin:0 0 9px;color:#153d2d}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.fact{border:1px solid #cfddd7;border-radius:7px;padding:10px;min-height:55px}.fact small{display:block;color:#668076;margin-bottom:5px}.fact b{overflow-wrap:anywhere}.badge{float:right;color:#147a4c;background:#e5f8ee;border-radius:10px;padding:2px 6px;font-size:8px}.unknown{border-left:3px solid #d5a83f;background:#fff9e9;padding:8px 10px;margin:6px 0}.warning{background:#fff0ed;border:1px solid #df9a8c;padding:12px;border-radius:7px;line-height:1.5}.api{border-collapse:collapse;width:100%}.api td,.api th{border:1px solid #cfddd7;padding:8px;text-align:left}.api th{background:#edf6f2}.footer{margin-top:20px;border-top:1px solid #cfddd7;padding-top:8px;color:#6a8177;font-size:9px}</style></head><body><div class="hero"><div class="eyebrow">FIRMWARE FORGE / DEVICE ASSESSMENT</div><h1>ESP Device Assessment Report</h1><p>Recovery image inventory and integration readiness assessment</p><div class="meta">Generated ${html(new Date().toLocaleString())}</div></div><div class="section"><h2>Detected and verified facts</h2><div class="grid">${facts.map(([k,v,s])=>`<div class="fact"><span class="badge">${html(s)}</span><small>${html(k)}</small><b>${html(v)}</b></div>`).join('')}</div></div><div class="section"><h2>Gateway and management capability</h2><table class="api"><tr><th>Capability</th><th>Assessment</th></tr><tr><td>Device discovery and status</td><td>Supported by Firmware Forge USB inspection and authenticated phone gateway.</td></tr><tr><td>Commands and configuration</td><td>Gateway transport supports authenticated device operations. Firmware-level configuration requires a compatible API in the target firmware.</td></tr><tr><td>OTA updates</td><td>Not detected from the raw backup. Replacement/source firmware must expose a validated OTA endpoint.</td></tr><tr><td>HTTPS / WebSocket / MQTT</td><td>Not detected. The current local phone bridge uses a temporary pairing token; production remote control should add transport encryption and certificate validation.</td></tr></table></div><div class="section"><h2>Information required before firmware modification</h2>${unknowns.map(([k,v])=>`<div class="unknown"><b>${html(k)}</b><br>${html(v)}</div>`).join('')}</div><div class="section"><h2>Recovery and security warning</h2><div class="warning">Keep the original BIN unchanged. It is a compiled recovery image, not editable source code, and may contain Wi-Fi credentials, tokens, calibration data, and device configuration. Work only on copies and verify the SHA-256 checksum before restoration.</div></div><div class="footer">Generated locally by Firmware Forge. Detected facts come from the connected device and backup record; all other fields are explicitly marked unknown or not provided.</div></body></html>`;
+}
+async function createAssessmentPdf(item, target) {
+  const report = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+  try { await report.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(assessmentHtml(item))}`); const pdf = await report.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } }); fs.writeFileSync(target, pdf); } finally { report.destroy(); }
+}
 function esptoolCommand() {
   const bundled = app.isPackaged ? path.join(process.resourcesPath, 'tools', 'esptool.exe') : path.join(__dirname, '..', 'tools', 'esptool.exe');
   return fs.existsSync(bundled) ? { command: bundled, prefix: [] } : { command: 'python', prefix: ['-m', 'esptool'] };
@@ -167,13 +194,29 @@ ipcMain.handle('esp:inspect', async (_e, { port, baud = 115200 }) => {
   if (sizeMatch) flashSizeBytes = Math.round(Number(sizeMatch[1]) * (sizeMatch[2].toUpperCase() === 'MB' ? 1048576 : 1024));
   return { chip, mac, flashLabel, flashSizeBytes, flashSizeHex: flashSizeBytes ? `0x${flashSizeBytes.toString(16)}` : null, raw: output };
 });
-ipcMain.handle('esp:backup', async (_e, { port, baud = 460800, size = '0x400000' }) => {
-  const chosen = await dialog.showSaveDialog(win, { title: 'Save flash backup', defaultPath: `esp32-backup-${new Date().toISOString().slice(0,10)}.bin`, filters: [{ name: 'Firmware image', extensions: ['bin'] }] });
-  if (chosen.canceled) return null;
-  await esptool(['--port', port, '--baud', String(baud), 'read-flash', '0x0', size, chosen.filePath]);
-  const hash = crypto.createHash('sha256').update(fs.readFileSync(chosen.filePath)).digest('hex');
-  return { path: chosen.filePath, sha256: hash, bytes: fs.statSync(chosen.filePath).size };
+ipcMain.handle('esp:backup', async (_e, { port, baud = 460800, size = '0x400000', chip = 'ESP device', mac = 'Unknown', flashLabel = '' }) => {
+  const createdAt = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const filename = `esp32-${safeName(mac)}-${createdAt.replace(/[:.]/g, '-')}.bin`;
+  const target = path.join(libraryDirectory(), filename);
+  await esptool(['--port', port, '--baud', String(baud), 'read-flash', '0x0', size, target]);
+  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');
+  const entry = { id, filename, path: target, sha256, bytes: fs.statSync(target).size, createdAt, chip, mac, flashLabel, port };
+  const items = [entry, ...readLibrary().filter(item => item.id !== id)]; writeLibrary(items);
+  return entry;
 });
+ipcMain.handle('library:list', async () => readLibrary().filter(item => fs.existsSync(item.path)));
+ipcMain.handle('library:export', async (_e, id) => {
+  const item = readLibrary().find(entry => entry.id === id); if (!item || !fs.existsSync(item.path)) throw new Error('The library backup file is missing.');
+  const chosen = await dialog.showSaveDialog(win, { title: 'Export firmware backup', defaultPath: item.filename, filters: [{ name: 'Firmware image', extensions: ['bin'] }] });
+  if (chosen.canceled) return null; fs.copyFileSync(item.path, chosen.filePath); return chosen.filePath;
+});
+ipcMain.handle('library:report', async (_e, id) => {
+  const item = readLibrary().find(entry => entry.id === id); if (!item) throw new Error('The library record is missing.');
+  const chosen = await dialog.showSaveDialog(win, { title: 'Save device assessment report', defaultPath: `${path.parse(item.filename).name}-assessment.pdf`, filters: [{ name: 'PDF document', extensions: ['pdf'] }] });
+  if (chosen.canceled) return null; await createAssessmentPdf(item, chosen.filePath); return chosen.filePath;
+});
+ipcMain.handle('library:open', async () => shell.openPath(libraryDirectory()));
 ipcMain.handle('esp:flash', async (_e, { port, baud = 460800, file, address = '0x0', erase = false }) => {
   if (!file || !fs.existsSync(file)) throw new Error('Select a valid firmware file.');
   if (erase) await esptool(['--port', port, '--baud', String(baud), 'erase-flash']);
