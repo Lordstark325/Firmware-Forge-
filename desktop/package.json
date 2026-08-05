@@ -1,6 +1,6 @@
 {
   "name": "firmware-forge",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "Safe desktop firmware manager for ESP32 and extensible device adapters",
   "main": "electron/main.cjs",

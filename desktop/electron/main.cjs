@@ -186,7 +186,7 @@ ipcMain.handle('devices:watch', async () => {
   for (const line of fastbootOut.split(/\r?\n/).filter(Boolean)) { const serial = line.trim().split(/\s+/)[0]; devices.push({ id: `fastboot:${serial}`, kind: 'android', confidence: 'confirmed', protocol: 'Fastboot', name: 'Android bootloader', detail: serial, serial }); }
   for (const p of ports) {
     const classification = classifySerialBoard(p);
-    devices.push({ id: `serial:${p.path}`, ...classification, protocol: 'Serial', name: classification.family, hardwareName: p.friendlyName || p.manufacturer || p.path, detail: `${p.path}${p.vendorId ? ` VID:${p.vendorId} PID:${p.productId}` : ''}`, port: p.path });
+    devices.push({ id: `serial:${p.path}`, ...classification, protocol: 'Serial', name: classification.family, hardwareName: p.friendlyName || p.manufacturer || p.path, vendorId: p.vendorId || '', productId: p.productId || '', serialNumber: p.serialNumber || '', hardwareId: p.pnpId || '', detail: `${p.path}${p.vendorId ? ` VID:${p.vendorId} PID:${p.productId}` : ''}`, port: p.path });
   }
   try {
     const parsed = pnpOut ? JSON.parse(pnpOut) : [];
@@ -194,7 +194,11 @@ ipcMain.handle('devices:watch', async () => {
       const name = p.Name || 'USB device'; const id = p.DeviceID || name;
       if (devices.some(d => id.includes(d.detail) || d.name === name)) continue;
       const routerish = /router|modem|mobile broadband|rndis|openwrt|ethernet gadget/i.test(name);
-      devices.push({ id: `usb:${id}`, kind: routerish ? 'router-candidate' : 'unknown', confidence: 'candidate', protocol: p.PNPClass || 'USB', name, detail: routerish ? 'Possible router/modem - model adapter required' : 'Unclassified USB hardware' });
+      const vid = id.match(/VID_([0-9A-F]{4})/i)?.[1]?.toUpperCase() || '';
+      const pid = id.match(/PID_([0-9A-F]{4})/i)?.[1]?.toUpperCase() || '';
+      const known = classifySerialBoard({ vendorId: vid, productId: pid, friendlyName: name });
+      const classified = known.kind !== 'serial-device';
+      devices.push({ id: `usb:${id}`, ...(classified ? known : { kind: routerish ? 'router-candidate' : 'unknown', confidence: 'candidate', family: routerish ? 'Router / modem candidate' : 'Unknown USB device' }), protocol: p.PNPClass || 'USB', name: classified ? known.family : name, hardwareName: name, hardwareId: id, vendorId: vid, productId: pid, detail: routerish ? 'Possible router/modem - model adapter required' : classified ? 'USB identity detected; a serial port or bootloader may still be required' : 'Unclassified USB hardware' });
     }
   } catch {}
   return { busy: false, devices };
