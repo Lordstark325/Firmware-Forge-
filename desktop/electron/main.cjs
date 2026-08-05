@@ -38,6 +38,23 @@ function libraryIndexPath() { return path.join(libraryDirectory(), 'index.json')
 function readLibrary() { try { return JSON.parse(fs.readFileSync(libraryIndexPath(), 'utf8')); } catch { return []; } }
 function writeLibrary(items) { fs.writeFileSync(libraryIndexPath(), JSON.stringify(items, null, 2), 'utf8'); }
 function safeName(value) { return String(value || 'unknown').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').slice(0, 50) || 'unknown'; }
+function classifySerialBoard(port) {
+  const vid = String(port.vendorId || '').toLowerCase().padStart(4, '0');
+  const pid = String(port.productId || '').toLowerCase().padStart(4, '0');
+  const name = `${port.friendlyName || ''} ${port.manufacturer || ''}`;
+  if (vid === '303a' || /espressif|esp32|esp8266/i.test(name)) return { kind: 'esp-candidate', family: 'Espressif ESP32 / ESP8266', confidence: vid === '303a' ? 'confirmed-vendor' : 'candidate' };
+  if (vid === '2e8a' || /raspberry pi pico|rp2040|rp2350/i.test(name)) return { kind: 'board-candidate', family: 'Raspberry Pi RP2040 / RP2350', confidence: 'confirmed-vendor' };
+  if (vid === '2341' || vid === '2a03' || /arduino/i.test(name)) return { kind: 'board-candidate', family: 'Arduino board', confidence: 'confirmed-vendor' };
+  if (vid === '0483' || /stm32|stmicro/i.test(name)) return { kind: 'board-candidate', family: pid === 'df11' ? 'STM32 DFU bootloader' : 'STM32 development board', confidence: 'confirmed-vendor' };
+  if (vid === '16c0' || /teensy/i.test(name)) return { kind: 'board-candidate', family: 'PJRC Teensy', confidence: 'confirmed-vendor' };
+  if (vid === '1915' || /nordic|nrf52|nrf53/i.test(name)) return { kind: 'board-candidate', family: 'Nordic nRF development board', confidence: 'confirmed-vendor' };
+  if (vid === '239a' || /adafruit/i.test(name)) return { kind: 'board-candidate', family: 'Adafruit development board', confidence: 'confirmed-vendor' };
+  if (vid === '04d8' || /microchip/i.test(name)) return { kind: 'board-candidate', family: 'Microchip development board', confidence: 'confirmed-vendor' };
+  if (vid === '1a86') return { kind: 'serial-adapter', family: 'WCH CH340 / CH341 serial adapter', confidence: 'adapter-only' };
+  if (vid === '10c4') return { kind: 'serial-adapter', family: 'Silicon Labs CP210x serial adapter', confidence: 'adapter-only' };
+  if (vid === '0403') return { kind: 'serial-adapter', family: 'FTDI USB serial adapter', confidence: 'adapter-only' };
+  return { kind: 'serial', family: 'Generic serial device', confidence: 'candidate' };
+}
 function html(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function assessmentHtml(item) {
   const facts = [
@@ -167,10 +184,9 @@ ipcMain.handle('devices:watch', async () => {
   const devices = [];
   for (const d of parseAdb(adbOut)) devices.push({ id: `adb:${d.serial}`, kind: 'android', confidence: 'confirmed', protocol: 'ADB', name: d.model || d.serial, detail: d.state, serial: d.serial });
   for (const line of fastbootOut.split(/\r?\n/).filter(Boolean)) { const serial = line.trim().split(/\s+/)[0]; devices.push({ id: `fastboot:${serial}`, kind: 'android', confidence: 'confirmed', protocol: 'Fastboot', name: 'Android bootloader', detail: serial, serial }); }
-  const espVendors = new Set(['10c4', '1a86', '0403', '303a']);
   for (const p of ports) {
-    const vendor = String(p.vendorId || '').toLowerCase();
-    devices.push({ id: `serial:${p.path}`, kind: espVendors.has(vendor) ? 'esp-candidate' : 'serial', confidence: 'candidate', protocol: 'Serial', name: p.friendlyName || p.manufacturer || p.path, detail: `${p.path}${p.vendorId ? ` VID:${p.vendorId} PID:${p.productId}` : ''}`, port: p.path });
+    const classification = classifySerialBoard(p);
+    devices.push({ id: `serial:${p.path}`, ...classification, protocol: 'Serial', name: classification.family, hardwareName: p.friendlyName || p.manufacturer || p.path, detail: `${p.path}${p.vendorId ? ` VID:${p.vendorId} PID:${p.productId}` : ''}`, port: p.path });
   }
   try {
     const parsed = pnpOut ? JSON.parse(pnpOut) : [];
